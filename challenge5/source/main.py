@@ -1,7 +1,8 @@
 
 
+from datetime import datetime
 import tensorflow as tf
-from tensorflow.keras.applications import DenseNet121
+from tensorflow.keras.applications import DenseNet169
 import numpy as np
 import os
 #######################################
@@ -11,14 +12,12 @@ tf.compat.v1.Session(config=config)   #
 #######################################
 import PIL
 import PIL.Image
-import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from os import listdir
 from os.path import isfile, join
 
-
-import tensorflow_datasets as tfds
+import csv
 
 import pandas as pd
 import tensorflow.keras as keras
@@ -34,6 +33,12 @@ dataset_path = currentDir + "dataset/train_images/train_images/"
 imagesTrainPath = "../dataset/train_images/train_images/"
 labelsPath = "../dataset/train_images/train_label.txt"
 TRAINING_FILENAMES = [f for f in listdir(imagesTrainPath) if isfile(join(imagesTrainPath, f))]
+#################################################
+# Import the necessary libraries 
+from PIL import Image 
+from numpy import asarray 
+  
+  
 
 CLASSES = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 
@@ -54,6 +59,17 @@ def get_class(modelOutput): #takes the max probability index of a row and turns 
     b[np.arange(b.shape[0]), np.argmax(a, axis=1)] = 1
     return b
 
+def one_hot_to_lables(onehotData):
+    return np.argmax(onehotData, axis = 1)
+
+def write_to_file(data, outputFile = "output.csv"):
+    myFile = open(outputFile, 'w', newline='')
+    with myFile:
+        writer = csv.writer(myFile)
+        data = [["id", "classes"]] + data
+        writer.writerows(data)
+    print("Writing to ", outputFile," completed")
+
 # print('Tensorflow version ' + tf.__version__)
 # print(TRAINING_FILENAMES[0:10])
 
@@ -61,12 +77,11 @@ def get_class(modelOutput): #takes the max probability index of a row and turns 
 imgsize = (32,32)
 batchsize = 500
 
-
 train_ds = tf.keras.preprocessing.image_dataset_from_directory(
     "../dataset/train_images/train_images",
     labels = "inferred",
     label_mode = 'categorical',
-    validation_split=0.2,
+    validation_split=0.15,
     subset="training",
     shuffle=True,
     seed=123,
@@ -83,12 +98,25 @@ val_ds = tf.keras.preprocessing.image_dataset_from_directory(
     image_size=imgsize,
     batch_size=batchsize)
 
+test_ds = tf.keras.preprocessing.image_dataset_from_directory(
+    "../dataset/train_images/train_images",
+    labels = "inferred",
+    label_mode = 'categorical',
+    validation_split=0.15,
+    subset="validation",
+    seed=123,
+    image_size=imgsize,
+    batch_size=batchsize)
+
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 train_ds = train_ds.cache().prefetch(buffer_size=AUTOTUNE)
 val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 
+logdir = "logs/scalars/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
 
+EPOCHS = 15
 # LR_START = 0.00001
 # LR_MAX = 0.00005
 # LR_MIN = 0.00001
@@ -96,13 +124,20 @@ val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 # LR_SUSTAIN_EPOCHS = 0
 # LR_EXP_DECAY = .8
 
-EPOCHS = 15
-LR_START = 0.00001
-LR_MAX = 0.00009
+LR_START = 0.00001      # bfore 0.0001    
+LR_MAX = 0.00045 # bfore 0.0005
 LR_MIN = 0.00001
 LR_RAMPUP_EPOCHS = 8
-LR_SUSTAIN_EPOCHS = 4
-LR_EXP_DECAY = .9
+LR_SUSTAIN_EPOCHS = 2
+LR_EXP_DECAY = .8
+
+
+# LR_START = 0.00001
+# LR_MAX = 0.00015
+# LR_MIN = 0.00001
+# LR_RAMPUP_EPOCHS = 8
+# LR_SUSTAIN_EPOCHS = 2
+# LR_EXP_DECAY = .9
 
 def lrfn(epoch):
     if epoch < LR_RAMPUP_EPOCHS:
@@ -112,7 +147,7 @@ def lrfn(epoch):
     else:
         lr = (LR_MAX - LR_MIN) * LR_EXP_DECAY**(epoch - LR_RAMPUP_EPOCHS - LR_SUSTAIN_EPOCHS) + LR_MIN
     return lr
-    
+
 lr_callback = tf.keras.callbacks.LearningRateScheduler(lrfn, verbose = True)
 rng = [i for i in range(25 if EPOCHS<25 else EPOCHS)]
 y = [lrfn(x) for x in rng]
@@ -127,14 +162,18 @@ class convNeuralNet:
     def modelInit(self):
         rnet = DenseNet121(
             input_shape=(32,32,3),
-            weights='imagenet',
-            include_top=False
+            weights="imagenet",
+            include_top=False,
+            pooling=max
         )
         rnet.trainable = True
         model = keras.models.Sequential()
         
+        model.add(tf.keras.layers.GaussianNoise(0.15))
+        model.add(tf.keras.layers.experimental.preprocessing.Rescaling(1./255))
         model.add(keras.layers.experimental.preprocessing.RandomFlip("horizontal_and_vertical"))
-        model.add(keras.layers.experimental.preprocessing.RandomRotation(0.20))
+        model.add(tf.keras.layers.experimental.preprocessing.RandomContrast(0.7))
+        model.add(keras.layers.experimental.preprocessing.RandomRotation(0.5))
 
         model.add(rnet)
         model.add(keras.layers.GlobalAveragePooling2D())
@@ -148,7 +187,7 @@ class convNeuralNet:
         self.model = keras.models.load_model(path)
     
     def train(self, dataset, valset, nEpochs):
-        self.model.fit(dataset, validation_data=val_ds, epochs = nEpochs, callbacks=[lr_callback],verbose=2)
+        self.model.fit(dataset, validation_data=val_ds, epochs = nEpochs, callbacks=[lr_callback, tensorboard_callback],verbose=2)
     
     def predict(self, data_x):
         return self.model.predict(data_x)
@@ -161,7 +200,25 @@ class convNeuralNet:
     def ajustRotation(self, newrate):
         self.model.layers[1].factor = newrate
     
-
+tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
 
 modelConv = convNeuralNet()
 modelConv.train(train_ds,val_ds, 30)
+
+testDir = "../dataset/test_images/content/data/test_imagess/"
+
+test_list = []
+for i in range(10000):
+    img = Image.open(testDir +"Image_"+str(i+1) + ".png") 
+    array = asarray(img)
+    test_list.append(array)
+    
+test_list = np.array(test_list)
+
+prediction = modelConv.predict(test_list)
+
+i = np.arange(prediction.shape[0])
+labels = one_hot_to_lables(prediction)
+output = np.stack((i, labels), axis = 1)
+print(len(labels))
+write_to_file(output.tolist(), outputFile = "prediction.csv")
