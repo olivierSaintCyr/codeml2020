@@ -2,7 +2,7 @@
 
 from datetime import datetime
 import tensorflow as tf
-from tensorflow.keras.applications import DenseNet169
+from tensorflow.keras.applications import DenseNet121
 import numpy as np
 import os
 #######################################
@@ -37,8 +37,7 @@ TRAINING_FILENAMES = [f for f in listdir(imagesTrainPath) if isfile(join(imagesT
 # Import the necessary libraries 
 from PIL import Image 
 from numpy import asarray 
-  
-  
+
 
 CLASSES = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 
@@ -81,10 +80,10 @@ train_ds = tf.keras.preprocessing.image_dataset_from_directory(
     "../dataset/train_images/train_images",
     labels = "inferred",
     label_mode = 'categorical',
-    validation_split=0.15,
+    validation_split=0.10,
     subset="training",
     shuffle=True,
-    seed=123,
+    seed=321,
     image_size = imgsize,
     batch_size=batchsize)
 
@@ -92,21 +91,12 @@ val_ds = tf.keras.preprocessing.image_dataset_from_directory(
     "../dataset/train_images/train_images",
     labels = "inferred",
     label_mode = 'categorical',
-    validation_split=0.2,
+    validation_split=0.10,
     subset="validation",
-    seed=123,
+    seed=321,
     image_size=imgsize,
     batch_size=batchsize)
 
-test_ds = tf.keras.preprocessing.image_dataset_from_directory(
-    "../dataset/train_images/train_images",
-    labels = "inferred",
-    label_mode = 'categorical',
-    validation_split=0.15,
-    subset="validation",
-    seed=123,
-    image_size=imgsize,
-    batch_size=batchsize)
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 
@@ -128,7 +118,7 @@ LR_START = 0.00001      # bfore 0.0001
 LR_MAX = 0.00045 # bfore 0.0005
 LR_MIN = 0.00001
 LR_RAMPUP_EPOCHS = 8
-LR_SUSTAIN_EPOCHS = 2
+LR_SUSTAIN_EPOCHS = 2 # before 2
 LR_EXP_DECAY = .8
 
 
@@ -147,13 +137,42 @@ def lrfn(epoch):
     else:
         lr = (LR_MAX - LR_MIN) * LR_EXP_DECAY**(epoch - LR_RAMPUP_EPOCHS - LR_SUSTAIN_EPOCHS) + LR_MIN
     return lr
+# def lrfn(epoch):
+#     if epoch < LR_RAMPUP_EPOCHS:
+#         lr = (LR_MAX - LR_START) / LR_RAMPUP_EPOCHS * epoch + LR_START
+#     elif epoch < LR_RAMPUP_EPOCHS + LR_SUSTAIN_EPOCHS:
+#         lr = LR_MAX
+#     elif epoch > (LR_RAMPUP_EPOCHS + LR_SUSTAIN_EPOCHS)/2:
+#          lr = LR_MAX/2
+#     else:
+#         lr = (LR_MAX - LR_MIN) * LR_EXP_DECAY**(epoch - LR_RAMPUP_EPOCHS - LR_SUSTAIN_EPOCHS) + LR_MIN
+#     return lr
 
 lr_callback = tf.keras.callbacks.LearningRateScheduler(lrfn, verbose = True)
 rng = [i for i in range(25 if EPOCHS<25 else EPOCHS)]
 y = [lrfn(x) for x in rng]
 # plt.plot(y)
 # plt.show()
+import random
+def random_invert_img(x, p=0.5):
+  if  random.random() < p:
+    x = (255-x)
+  else:
+    x
+  return x
 
+def random_invert(factor=0.5):
+  return tf.keras.layers.Lambda(lambda x: random_invert_img(x, factor))
+
+# def random_greyscale_convert_img(x, p=0.5):
+#   if  random.random() < p:
+#     x = tf.image.rgb_to_grayscale(x)
+#   else:
+#     x
+#   return x
+
+# def random_greyscale(factor = 0.5):
+#     return tf.keras.layers.Lambda(lambda x: random_greyscale_convert_img(x, factor ))
 
 class convNeuralNet:
     def __init__(self):
@@ -169,16 +188,16 @@ class convNeuralNet:
         rnet.trainable = True
         model = keras.models.Sequential()
         
-        model.add(tf.keras.layers.GaussianNoise(0.15))
+        model.add(random_invert(factor=0.1))
+        model.add(tf.keras.layers.GaussianNoise(0.12)) #before 0.1
         model.add(tf.keras.layers.experimental.preprocessing.Rescaling(1./255))
-        model.add(keras.layers.experimental.preprocessing.RandomFlip("horizontal_and_vertical"))
-        model.add(tf.keras.layers.experimental.preprocessing.RandomContrast(0.7))
-        model.add(keras.layers.experimental.preprocessing.RandomRotation(0.5))
-
-        model.add(rnet)
-        model.add(keras.layers.GlobalAveragePooling2D())
+        model.add(keras.layers.experimental.preprocessing.RandomFlip("horizontal")) #84.5 horizontal
+        model.add(tf.keras.layers.experimental.preprocessing.RandomContrast(0.01))
         
-        model.add(keras.layers.Dense(10, activation = 'softmax'))
+        model.add(rnet)
+        model.add(keras.layers.GlobalMaxPooling2D())
+        
+        model.add(keras.layers.Dense(10, activation = 'sigmoid'))
         
         model.compile(loss = 'categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
         return model
@@ -203,7 +222,7 @@ class convNeuralNet:
 tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
 
 modelConv = convNeuralNet()
-modelConv.train(train_ds,val_ds, 30)
+modelConv.train(train_ds,val_ds, 20)
 
 testDir = "../dataset/test_images/content/data/test_imagess/"
 
